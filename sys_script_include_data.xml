@@ -1,0 +1,213 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<unload unload_date="2017-08-31 23:03:55">
+<sys_script_include action="INSERT_OR_UPDATE">
+<access>public</access>
+<active>true</active>
+<api_name>global.Data</api_name>
+<client_callable>true</client_callable>
+<description>Bit of script to make the GlideRecord stuff reusable.
+
+Usage:
+  get(): Use this to query a table
+            Data.get({"tableName": "incident", "query": "short_description=some description", "page": 1, "recordsPerPage": 5}})
+  set(): Use this to perform insert, updated, delete and merge (update or insert) operations
+             INSERT: Data.set({"tableName": "incident", "insert": {"short_description": "insert this"}})
+             UPDATE: Data.set({"tableName": "incident", "query": "short_description=match this", "update": {"short_description": "update this"}})
+             MERGE: Data.set({"tableName": "incident", "query": "short_description=match this", "merge": {"short_description": "insert or update this"}})
+             DELETE: Data.set({"tableName": "incident", "delete": "short_description=match this"}})</description>
+<name>Data</name>
+<script><![CDATA[var Data = {
+	process : function() {
+		return !!this[this.getName()] && this[this.getName()]();
+	},
+	get: function(options) {
+		// Usage
+		// Data.get({"tableName": "incident", "query": "short_description=some description", "page": 1, "recordsPerPage": 5,"orderBy":<field_name> <orderDirection>}})
+		// Query the table
+		var page = options['page'] || 1;
+		var recordsPerPage = options['recordsPerPage'];
+		var output = this._query({
+			"tableName": options['tableName'],
+			"page": page,
+			"recordsPerPage": recordsPerPage,
+			"query": options['query'],
+			"isComplex": options['isComplex'],  // If true this will return value, display value and label
+			"orderBy": options['orderBy'],
+			"fields": typeof options['fields'] == 
+			'string' ? options['fields'].split(',') : options['fields']
+		});
+		
+		return output;
+	},
+	set: function(options){
+		// Usage:
+		// INSERT: Data.set({"tableName": "incident", "insert": {"short_description": "insert this"}})
+		// UPDATE: Data.set({"tableName": "incident", "query": "short_description=match this", "update": {"short_description": "update this"}})
+		// MERGE: Data.set({"tableName": "incident", "query": "short_description=match this", "merge": {"short_description": "insert or update this"}})
+		// DELETE: Data.set({"tableName": "incident", "delete": "short_description=match this"}})
+		
+		if(!!options['insert']){
+			return this._insert(options);
+		}
+		if(!!options['update'] && !!options['query']){
+			return this._update(options);
+		}
+		if(!!options['merge'] && !!options['query']){
+			return this._merge(options);
+		}
+		if(!!options['delete']){
+			return this._delete(options);
+		}
+	},
+	_delete: function(parameters){
+		var recordsToDelete = new GlideRecord(parameters.tableName);
+		if(!!parameters['delete']){
+			recordsToDelete.addEncodedQuery(parameters['delete']);
+		}
+		
+		recordsToDelete.query();
+		var rowsDeleted = recordsToDelete.getRowCount();
+		recordsToDelete.deleteMultiple();
+		
+		return {"rowsDeleted": rowsDeleted};
+	},
+	_merge: function(parameters){
+		// Try update first, if no rows updated, then insert
+		parameters.update = parameters['merge'];
+		var result = this._update(parameters);
+		if(!!result && result.rowsUpdated === 0){
+			parameters['insert'] = parameters['merge'];
+			result = this._insert(parameters);
+		}
+		
+		return result;
+	},
+	_update: function(parameters){
+		var recordsToUpdate = new GlideRecord(parameters.tableName);
+		if(!!parameters.query){
+			recordsToUpdate.addEncodedQuery(parameters.query);
+		}
+		recordsToUpdate.query();
+		var rowsUpdated = 0;
+		while(typeof parameters['update'] === 'object' && recordsToUpdate.next()) {
+			_(parameters['update']).each(function(value, property){
+				recordsToUpdate[property] = value;
+			});
+			recordsToUpdate.update();
+			rowsUpdated++;
+		}
+		return {"rowsUpdated": rowsUpdated};
+	},
+	_insert: function(parameters){
+		var newRecord = new GlideRecordSecure(parameters.tableName);
+		newRecord.initialize();
+		
+		_(parameters['insert']).each(function(value, property){
+			newRecord[property] = value;
+		});
+		newRecord.insert();
+		return {"inserted": parameters['insert']};
+	},
+	_query: function(parameters){
+		var output = [];
+		var grs  = new GlideRecordSecure(parameters.tableName) ;
+		
+		// Setup
+		
+		if(!!parameters.recordsPerPage){
+			var page = Number(parameters.page);
+			var recordsPerPage = Number(parameters.recordsPerPage);
+			
+			var firstRow = this._zeroLowerLimit((page * recordsPerPage) - (recordsPerPage - 1) - 1);
+			var lastRow = firstRow + recordsPerPage;
+			// gs.log('page: ' + page + '; recordsPerPage: ' + recordsPerPage + '; firstRow: ' + firstRow + '; lastRow: ' + lastRow);
+			var showTotalCount = true;
+			grs.chooseWindow(firstRow, lastRow, showTotalCount);
+		}
+		if(!!parameters.query){
+			grs.addEncodedQuery(parameters.query);
+		}
+		if(!!parameters.orderBy){
+			var orderBySet = parameters.orderBy.split(',');
+			_(orderBySet).each(function(orderBy){
+				var orderDetails = orderBy.trim().split(' ');
+				var orderField = orderDetails[0];
+				var direction = orderDetails[1] && orderDetails[1].trim();
+				
+				if(!!direction && typeof direction === 'string' && direction.toLowerCase() != 'DESC'.toLowerCase()){
+					grs.orderBy(orderField);
+				}
+				else{
+					grs.orderByDesc(orderField);
+				}
+			});
+		}
+		
+		// Query
+		
+		grs.query();
+		
+		// Parse Results
+		
+		var totalCount = grs.getRowCount();
+		//	gs.log('totalCount : '+parameters.tableName+" : "+totalCount);
+		var columns = parameters.fields || Object.keys(grs); // Columns on this row
+		while(grs.next()){
+			//var row = this._getSimpleValues(grs);
+			var row = parameters.isComplex ? this._getComplexValues(grs, {"fields": columns}) : this._getSimpleValues(grs, {"fields": columns});
+			output.push(row);
+		}
+		
+		//	JSUtil.logObject(output);
+		
+		return {"result": output, "count": totalCount, "fields": columns};
+	},
+	_zeroLowerLimit: function(input){
+		return Number(input) < 0 ? 0 : Number(input);
+	},
+	_getSimpleValues: function(glideRecord, options){
+		var output = {};
+		var columns = options.fields || Object.keys(glideRecord); // Columns on this row
+		_(columns).each(function(column){
+			output[column] = glideRecord.getDisplayValue(column);
+		});
+		
+		return output;
+	},
+	_getComplexValues:function(glideRecord, options){
+		var output = {};
+		if(!glideRecord){
+			return output;
+		}
+					
+		var columns = options.fields || Object.keys(glideRecord); // Columns on this row
+		_(columns).each(function(column){
+			//gs.log(glideRecord.getValue(column)+ "  : "+glideRecord.getDisplayValue(column)+ "  : "+glideRecord[column].getValue(column)+ "  : "+glideRecord.getValue(column)+ "  : ",'test1');
+			output[column] = {
+				"value": glideRecord.getValue(column),
+				"displayValue": glideRecord.getDisplayValue(column),
+				"label": glideRecord[column] && glideRecord[column].getLabel(column),
+				"table": glideRecord[column] && glideRecord[column].getTableName()
+			};
+		});
+		
+		return output;
+		
+	}
+};]]></script>
+<sys_class_name>sys_script_include</sys_class_name>
+<sys_created_by>admin</sys_created_by>
+<sys_created_on>2016-06-28 04:03:26</sys_created_on>
+<sys_customer_update>true</sys_customer_update>
+<sys_id>45c25611dbd062006685d8fdbf961968</sys_id>
+<sys_mod_count>220</sys_mod_count>
+<sys_name>Data</sys_name>
+<sys_package display_value="Global">global</sys_package>
+<sys_policy/>
+<sys_replace_on_upgrade>false</sys_replace_on_upgrade>
+<sys_scope display_value="Global">global</sys_scope>
+<sys_update_name>sys_script_include_45c25611dbd062006685d8fdbf961968</sys_update_name>
+<sys_updated_by>Arthur.Cheung</sys_updated_by>
+<sys_updated_on>2017-08-22 23:07:27</sys_updated_on>
+</sys_script_include>
+</unload>
