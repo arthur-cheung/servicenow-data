@@ -17,6 +17,10 @@ There is a dependency on underscore, which I have provided here as well, if you 
              UPDATE: Data.set({"tableName": "incident", "query": "short_description=match this", "update": {"short_description": "update this"}})
              MERGE: Data.set({"tableName": "incident", "query": "short_description=match this", "merge": {"short_description": "insert or update this"}})
              DELETE: Data.set({"tableName": "incident", "delete": "short_description=match this"}})
+             
+  * aggregate(): Use this to get stats
+  
+            Data.aggregate({"tableName": "sc_req_item",  "aggregate": {"count": "cat_item", "avg": "reassignment_count"},  "groupBy": cat_item",  "orderByAggregate": {"count": "cat_item"}})
 
 ### Options:
   When invoking "get", there are the following options available:
