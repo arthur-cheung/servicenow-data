@@ -20,7 +20,7 @@ There is a dependency on underscore, which I have provided here as well, if you 
              
   * aggregate(): Use this to get stats
   
-            Data.aggregate({"tableName": "sc_req_item",  "aggregate": {"count": "cat_item", "avg": "reassignment_count"},  "groupBy": cat_item",  "orderByAggregate": {"count": "cat_item"}})
+            Data.aggregate({"tableName": "sc_req_item",  "aggregate": {"count": "cat_item", "avg": "reassignment_count"},  "groupBy": cat_item",  "orderByAggregate": {"count": "cat_item"}, "having": "count > 1000"})
 
 ### Options:
   When invoking "get", there are the following options available:
